@@ -1,0 +1,6 @@
+-r requirements-serve.txt
+scipy==1.18.1
+matplotlib==3.11.2
+httpx2==2.13.1
+pytest==9.1.1
+ruff==0.17.0
