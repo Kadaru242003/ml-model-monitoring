@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: pip install -r requirements.txt -e .
+      - name: Lint
+        run: |
+          ruff check .
+          ruff format --check .
+      - name: Tests
+        run: pytest
+      - name: README numbers match the committed reports
+        run: python scripts/render_readme.py --check
+
+  pipeline-and-docker:
+    needs: lint-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: pip install -r requirements.txt -e .
+      - name: Download data (checksum verified) and train
+        run: python scripts/train.py
+      - name: Smoke run of the monitoring pipeline
+        run: |
+          python scripts/replay.py --limit 6000
+          python scripts/monitor.py
+          python scripts/simulate_detectors.py --trials 3
+      - name: Build image
+        run: docker build -t hotelmon:ci .
+      - name: Run container and call the API
+        run: |
+          docker run -d --name api -p 8000:8000 hotelmon:ci
+          for i in $(seq 1 30); do curl -sf localhost:8000/health && break; sleep 1; done
+          curl -sf localhost:8000/model-info > /dev/null
+          python scripts/load_test.py --url http://localhost:8000 --n 200 --warmup 20 \
+            --label ci-smoke --out /tmp/latency-ci.json
+          code=$(curl -s -o /dev/null -w '%{http_code}' -H 'content-type: application/json' \
+            -d '{"hotel":"Motel"}' localhost:8000/predict)
+          test "$code" = "422"
+      - name: Container logs
+        if: always()
+        run: docker logs api || true

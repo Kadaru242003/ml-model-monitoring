@@ -1,0 +1,20 @@
+{
+  "setup": "docker (local build)",
+  "url": "http://localhost:8000",
+  "model_version": "lightgbm-7c2ae42a-c6943bc",
+  "requests": 2000,
+  "warmup_requests": 100,
+  "concurrency": 1,
+  "p50_ms": 16.54634999999871,
+  "p95_ms": 23.45412754997369,
+  "p99_ms": 27.22888383001191,
+  "mean_ms": 17.51043146500308,
+  "throughput_rps_sequential": 57.10881550798064,
+  "machine": {
+    "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+    "logical_cpus": 4,
+    "memory_gb": 15.7,
+    "os": "Linux 6.18.44-fc-v114",
+    "python_client": "3.12.3"
+  }
+}
