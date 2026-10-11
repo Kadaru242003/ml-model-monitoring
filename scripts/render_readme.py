@@ -382,11 +382,11 @@ BLOCKS = {
 
 def render(text: str) -> str:
     for name, fn in BLOCKS.items():
-        pat = re.compile(rf"(<!-- BEGIN:{name} -->\n).*?(\n<!-- END:{name} -->)", re.S)
+        pat = re.compile(rf"(<!-- BEGIN:{name} -->\n).*?(<!-- END:{name} -->)", re.S)
         if not pat.search(text):
             raise SystemExit(f"README is missing the {name} block markers")
         body = fn()
-        text = pat.sub(lambda m, body=body: m.group(1) + body + m.group(2), text)
+        text = pat.sub(lambda m, body=body: m.group(1) + body + "\n" + m.group(2), text)
     return text
 
 
