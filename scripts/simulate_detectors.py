@@ -6,8 +6,9 @@ plainly (no shift) or with importance weights that create a shift of known size.
 Shifts are made by resampling real rows, so every value stays realistic.
 
 - numeric feature f: weight exp(beta * z), z = clipped standard score of f.
-  Effect size reported as the standardized mean difference (SMD) it produces.
+  Effect size: the standardized mean difference (SMD) measured in the drawn samples.
 - categorical feature f, category c: reweight so the share of c rises by delta.
+  Effect size: the share change measured in the drawn samples.
 
 Detection rate = share of trials where the detector fires. At size 0 this is
 the false alarm rate.
@@ -32,7 +33,7 @@ from hotelmon import artifacts, config, drift, monitoring  # noqa: E402
 from hotelmon.features import to_model_frame  # noqa: E402
 from hotelmon.simulation import categorical_weights, numeric_weights  # noqa: E402
 
-SAMPLE_SIZES = [250, 1000, 4000]
+SAMPLE_SIZES = [250, 1000, 2500]
 NUMERIC_CASES = {
     "lead_time": [0.0, 0.05, 0.1, 0.2, 0.3, 0.5],
     "adr": [0.0, 0.05, 0.1, 0.2, 0.3, 0.5],
@@ -59,24 +60,39 @@ def detect_categorical(ref_counts: np.ndarray, cur_counts: np.ndarray) -> dict[s
     return {"psi>=0.1": psi >= 0.1, "psi>=0.2": psi >= 0.2, "test p<0.05": p < 0.05}
 
 
-def run_case(ref_col, pool_col, weights, n, trials, rng, numeric: bool) -> dict[str, float]:
+def run_case(
+    ref_col, pool_col, weights, n, trials, rng, numeric: bool, category: str | None = None
+) -> dict[str, float]:
+    """Detection rates over trials, plus the mean shift actually achieved in the samples.
+
+    Rows are drawn WITHOUT replacement, so with no shift the sample and the reference
+    are exchangeable random subsets of the same period and each test's null holds.
+    (Drawing with replacement from a finite pool inflates false alarms at large n.)
+    """
     hits = {"psi>=0.1": 0, "psi>=0.2": 0, "test p<0.05": 0}
+    effects = []
     if numeric:
         ref_vals, pool_vals = ref_col.to_numpy(dtype=float), pool_col.to_numpy(dtype=float)
+        ref_mean, ref_sd = ref_vals.mean(), ref_vals.std()
     else:
         cats = pd.Index(sorted(set(ref_col) | set(pool_col)))
         ref_counts = np.bincount(cats.get_indexer(ref_col), minlength=len(cats))
         pool_codes = cats.get_indexer(pool_col)
+        c_idx = cats.get_loc(category)
+        ref_share = ref_counts[c_idx] / ref_counts.sum()
     for _ in range(trials):
-        idx = rng.choice(len(pool_col), size=n, replace=True, p=weights)
+        idx = rng.choice(len(pool_col), size=n, replace=False, p=weights)
         if numeric:
-            res = detect_numeric(ref_vals, pool_vals[idx])
+            cur = pool_vals[idx]
+            res = detect_numeric(ref_vals, cur)
+            effects.append((cur.mean() - ref_mean) / ref_sd)
         else:
             cur_counts = np.bincount(pool_codes[idx], minlength=len(cats))
             res = detect_categorical(ref_counts, cur_counts)
+            effects.append(cur_counts[c_idx] / n - ref_share)
         for k, v in res.items():
             hits[k] += bool(v)
-    return {k: v / trials for k, v in hits.items()}
+    return {k: v / trials for k, v in hits.items()} | {"effect": round(float(np.mean(effects)), 4)}
 
 
 def any_feature_false_alarm(ref, pool, n, trials, rng) -> dict[str, float]:
@@ -84,7 +100,7 @@ def any_feature_false_alarm(ref, pool, n, trials, rng) -> dict[str, float]:
     k = len(monitoring.DRIFT_FEATURES)
     hits = {"psi>=0.1": 0, "psi>=0.2": 0, "test p<0.05": 0, "test p<0.05/k (Bonferroni)": 0}
     for _ in range(trials):
-        cur = pool.iloc[rng.integers(0, len(pool), n)]
+        cur = pool.iloc[rng.choice(len(pool), size=n, replace=False)]
         t = drift.feature_drift(ref, cur, monitoring.DRIFT_NUMERIC, monitoring.DRIFT_CATEGORICAL)
         hits["psi>=0.1"] += bool((t["psi"] >= 0.1).any())
         hits["psi>=0.2"] += bool((t["psi"] >= 0.2).any())
@@ -136,7 +152,6 @@ def main() -> None:
         x = pool[f].to_numpy(dtype=float)
         for beta in sizes:
             w = numeric_weights(x, beta)
-            smd = float(((w * x).sum() - x.mean()) / x.std())
             for n in SAMPLE_SIZES:
                 rates = run_case(ref[f], pool[f], w, n, args.trials, rng, numeric=True)
                 rows.append(
@@ -145,7 +160,6 @@ def main() -> None:
                         "kind": "numeric",
                         "shift": f"beta={beta}",
                         "size": beta,
-                        "effect": round(smd, 4),
                         "effect_unit": "SMD",
                         "n": n,
                     }
@@ -157,14 +171,15 @@ def main() -> None:
         for delta in sizes:
             w = categorical_weights(pool[f], cat, delta)
             for n in SAMPLE_SIZES:
-                rates = run_case(ref[f], pool[f], w, n, args.trials, rng, numeric=False)
+                rates = run_case(
+                    ref[f], pool[f], w, n, args.trials, rng, numeric=False, category=cat
+                )
                 rows.append(
                     {
                         "feature": f,
                         "kind": "categorical",
                         "shift": f"{cat} +{delta:.2f}",
                         "size": delta,
-                        "effect": delta,
                         "effect_unit": "share points",
                         "base_share": round(base, 4),
                         "n": n,

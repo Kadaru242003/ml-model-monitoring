@@ -91,7 +91,7 @@ The served model is the one with the higher validation ROC AUC.
 
 ![Reliability curves on validation](reports/figures/reliability_valid.png)
 
-Both models under-predict cancellations at the high end of the score range (see the reliability curves). I did not recalibrate. Recalibrating on the validation period would leave no clean held-out period.
+Neither model is well calibrated on the validation quarter. LightGBM's predictions sit below the observed cancellation rate in most bins, so it under-predicts overall. Logistic regression under-predicts at low scores and over-predicts in its upper bins. I did not recalibrate. Recalibrating on the validation period would leave no clean held-out period.
 
 **How the LightGBM settings were chosen.** With LightGBM's default native categorical splits, the model was worse than logistic regression. It overfit high-cardinality fields like `agent` and `country`. I compared a small grid on an inner time split *inside the training year*. The validation period was not used for this choice.
 
@@ -166,7 +166,7 @@ Weekly windows are autocorrelated. So the weekly p-values come from a circular-s
 * No drift summary has a positive correlation with the AUC drop. At the weekly level, more feature drift goes with a *smaller* drop.
 * Every alarm rule has precision close to the share of degraded weeks. That is what random alarms would get.
 * The best single explanation is the share of `Non Refund` deposits. These bookings are almost always canceled, so they are easy to rank. When their share falls, as in July and August 2017, AUC falls. This is a change in the mix of easy and hard cases. Generic drift scores do not capture it.
-* AUC on No Deposit bookings alone also dips in July and August 2017, so the mix effect is not the whole story. Part of the drop is harder cases within the same segment.
+* AUC on No Deposit bookings alone also falls through spring 2017 and is lowest in July and August 2017. So the mix effect is not the whole story. Part of the drop is harder cases within the same segment.
 
 The practical lesson: on this data, drift scores are useful to explain a change after the fact. They are not useful as an alarm for performance loss. Watching performance directly on labeled data, and slicing it by key segments, works better.
 
